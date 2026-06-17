@@ -75,6 +75,7 @@ func resourceUser() *schema.Resource {
 		},
 		ValidateRawResourceConfigFuncs: []schema.ValidateRawResourceConfigFunc{
 			validation.PreferWriteOnlyAttribute(cty.GetAttrPath("password"), cty.GetAttrPath("password_wo")),
+			validateExpirePasswordRequiresPassword,
 		},
 		Description: "Creates an Okta User. This resource allows you to create and configure an Okta User.",
 		Schema: map[string]*schema.Schema{
@@ -293,11 +294,10 @@ func resourceUser() *schema.Resource {
 				Description:  "Version number for the write-only `password_wo`. Increment this value to trigger an update that re-applies the current `password_wo` to the user.",
 			},
 			"expire_password_on_create": {
-				Type:         schema.TypeBool,
-				Optional:     true,
-				Default:      false,
-				Description:  "If set to `true`, the user will have to change the password at the next login. This property will be used when user is being created and works only when `password` field is set. Default: `false`",
-				RequiredWith: []string{"password"},
+				Type:        schema.TypeBool,
+				Optional:    true,
+				Default:     false,
+				Description: "If set to `true`, the user will have to change the password at the next login. This property will be used when user is being created and works only when either the `password` or `password_wo` field is set. Default: `false`",
 			},
 			"password_inline_hook": {
 				Type:          schema.TypeString,
@@ -724,6 +724,45 @@ func resourceUserDelete(ctx context.Context, d *schema.ResourceData, meta interf
 		return diag.FromErr(err)
 	}
 	return nil
+}
+
+// validateExpirePasswordRequiresPassword ensures that expire_password_on_create
+// is only used when a password is supplied via either the `password` or the
+// write-only `password_wo` attribute. This replaces a simple RequiredWith on
+// `password`, which could not express the either/or relationship. Validation is
+// conservative: it only errors when expire_password_on_create is known to be
+// true and neither password source is present in the config.
+func validateExpirePasswordRequiresPassword(_ context.Context, req schema.ValidateResourceConfigFuncRequest, resp *schema.ValidateResourceConfigFuncResponse) {
+	cfg := req.RawConfig
+	if cfg.IsNull() || !cfg.IsKnown() {
+		return
+	}
+
+	expire := cfg.GetAttr("expire_password_on_create")
+	if expire.IsNull() || !expire.IsKnown() || expire.False() {
+		return
+	}
+
+	// Treat an attribute as "set" when it is present in config, even if its
+	// value is still unknown (e.g. password_wo sourced from an ephemeral
+	// random_password resource). Only a known empty string counts as unset.
+	isSet := func(v cty.Value) bool {
+		if v.IsNull() {
+			return false
+		}
+		if !v.IsKnown() {
+			return true
+		}
+		return v.AsString() != ""
+	}
+
+	if !isSet(cfg.GetAttr("password")) && !isSet(cfg.GetAttr("password_wo")) {
+		resp.Diagnostics = append(resp.Diagnostics, diag.Diagnostic{
+			Severity: diag.Error,
+			Summary:  "expire_password_on_create requires a password",
+			Detail:   "expire_password_on_create can only be set to true when either `password` or `password_wo` is also set.",
+		})
+	}
 }
 
 // getUserPasswordValue returns the password to apply to the user, preferring the

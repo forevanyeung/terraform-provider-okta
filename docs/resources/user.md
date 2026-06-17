@@ -77,7 +77,7 @@ resource "okta_user" "test2" {
 - `display_name` (String) User display name, suitable to show end users
 - `division` (String) User division
 - `employee_number` (String) User employee number
-- `expire_password_on_create` (Boolean) If set to `true`, the user will have to change the password at the next login. This property will be used when user is being created and works only when `password` field is set. Default: `false`
+- `expire_password_on_create` (Boolean) If set to `true`, the user will have to change the password at the next login. This property will be used when user is being created and works only when either the `password` or `password_wo` field is set. Default: `false`
 - `honorific_prefix` (String) User honorific prefix
 - `honorific_suffix` (String) User honorific suffix
 - `locale` (String) User default location

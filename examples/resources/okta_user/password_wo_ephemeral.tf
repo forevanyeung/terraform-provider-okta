@@ -17,4 +17,8 @@ resource "okta_user" "example" {
   # The generated password is applied to the user but never persisted in state.
   password_wo         = ephemeral.random_password.user.result
   password_wo_version = 1
+
+  # expire_password_on_create works with either `password` or `password_wo`,
+  # forcing the user to set their own password at first login.
+  expire_password_on_create = true
 }
