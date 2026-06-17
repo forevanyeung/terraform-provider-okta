@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"reflect"
 
+	"github.com/hashicorp/go-cty/cty"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/validation"
 	"github.com/okta/terraform-provider-okta/okta/utils"
 	"github.com/okta/terraform-provider-okta/sdk"
 	"github.com/okta/terraform-provider-okta/sdk/query"
@@ -70,6 +72,9 @@ func resourceUser() *schema.Resource {
 				d.SetId(user.Id)
 				return []*schema.ResourceData{d}, nil
 			},
+		},
+		ValidateRawResourceConfigFuncs: []schema.ValidateRawResourceConfigFunc{
+			validation.PreferWriteOnlyAttribute(cty.GetAttrPath("password"), cty.GetAttrPath("password_wo")),
 		},
 		Description: "Creates an Okta User. This resource allows you to create and configure an Okta User.",
 		Schema: map[string]*schema.Schema{
@@ -267,10 +272,25 @@ func resourceUser() *schema.Resource {
 				Description: "User zipcode or postal code",
 			},
 			"password": {
-				Type:        schema.TypeString,
-				Optional:    true,
-				Sensitive:   true,
-				Description: "User Password",
+				Type:          schema.TypeString,
+				Optional:      true,
+				Sensitive:     true,
+				ConflictsWith: []string{"password_wo", "password_hash", "password_inline_hook"},
+				Description:   "User Password. When set, this password is stored in the Terraform state file. For Terraform 1.11+, consider using `password_wo` instead to avoid persisting the password in state.",
+			},
+			"password_wo": {
+				Type:          schema.TypeString,
+				Optional:      true,
+				Sensitive:     true,
+				WriteOnly:     true,
+				ConflictsWith: []string{"password", "password_hash", "password_inline_hook"},
+				Description:   "User write-only password for Terraform 1.11+. Unlike `password`, this value is never persisted in the Terraform state file, providing improved security. This is the recommended way to set a user's password and pairs well with an ephemeral `random_password` resource so the generated password never touches state. Changes to this value are only applied when `password_wo_version` is changed. Only use this attribute with Terraform 1.11 or higher.",
+			},
+			"password_wo_version": {
+				Type:         schema.TypeInt,
+				Optional:     true,
+				RequiredWith: []string{"password_wo"},
+				Description:  "Version number for the write-only `password_wo`. Increment this value to trigger an update that re-applies the current `password_wo` to the user.",
 			},
 			"expire_password_on_create": {
 				Type:         schema.TypeBool,
@@ -459,7 +479,7 @@ func resourceUserCreate(ctx context.Context, d *schema.ResourceData, meta interf
 
 	uc := &sdk.UserCredentials{
 		Password: &sdk.PasswordCredential{
-			Value: d.Get("password").(string),
+			Value: getUserPasswordValue(d),
 			Hash:  buildPasswordCredentialHash(d.Get("password_hash")),
 		},
 	}
@@ -555,13 +575,14 @@ func resourceUserUpdate(ctx context.Context, d *schema.ResourceData, meta interf
 	userChange := hasProfileChange(d)
 	realmChange := d.HasChange("realm_id")
 	passwordChange := d.HasChange("password")
+	passwordWoChange := d.HasChange("password_wo_version")
 	passwordHashChange := d.HasChange("password_hash")
 	passwordHookChange := d.HasChange("password_inline_hook")
 	recoveryQuestionChange := d.HasChange("recovery_question")
 	recoveryAnswerChange := d.HasChange("recovery_answer")
 
 	client := getOktaClientFromMetadata(meta)
-	if passwordChange {
+	if passwordChange || passwordWoChange {
 		user, _, err := client.User.GetUser(ctx, d.Id())
 		if err != nil {
 			return diag.Errorf("failed to get user: %v", err)
@@ -658,6 +679,23 @@ func resourceUserUpdate(ctx context.Context, d *schema.ResourceData, meta interf
 		}
 	}
 
+	// The write-only password (password_wo) is never stored in state, so changes
+	// are driven by password_wo_version. When the version changes, re-read the
+	// current value from the raw config and apply it to the user.
+	if passwordWoChange {
+		user := sdk.User{
+			Credentials: &sdk.UserCredentials{
+				Password: &sdk.PasswordCredential{
+					Value: getUserPasswordValue(d),
+				},
+			},
+		}
+		_, _, err := client.User.UpdateUser(ctx, d.Id(), user, nil)
+		if err != nil {
+			return diag.Errorf("failed to set user's password: %v", err)
+		}
+	}
+
 	if recoveryQuestionChange || recoveryAnswerChange {
 		nuc := &sdk.UserCredentials{
 			Password: &sdk.PasswordCredential{
@@ -686,6 +724,17 @@ func resourceUserDelete(ctx context.Context, d *schema.ResourceData, meta interf
 		return diag.FromErr(err)
 	}
 	return nil
+}
+
+// getUserPasswordValue returns the password to apply to the user, preferring the
+// write-only password_wo attribute (read from the raw config since it is never
+// stored in state) and falling back to the regular password attribute.
+func getUserPasswordValue(d *schema.ResourceData) string {
+	woVal, _ := d.GetRawConfigAt(cty.GetAttrPath("password_wo"))
+	if !woVal.IsNull() && woVal.IsKnown() {
+		return woVal.AsString()
+	}
+	return d.Get("password").(string)
 }
 
 func buildPasswordCredentialHash(rawPasswordHash interface{}) *sdk.PasswordCredentialHash {

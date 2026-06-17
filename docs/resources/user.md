@@ -88,9 +88,11 @@ resource "okta_user" "test2" {
 - `nick_name` (String) User nickname
 - `old_password` (String, Sensitive) Old User Password. Should be only set in case the password was not changed using the provider. fter successful password change this field should be removed and `password` field should be used for further changes.
 - `organization` (String) User organization
-- `password` (String, Sensitive) User Password
+- `password` (String, Sensitive) User Password. When set, this password is stored in the Terraform state file. For Terraform 1.11+, consider using `password_wo` instead to avoid persisting the password in state.
 - `password_hash` (Block Set, Max: 1) Specifies a hashed password to import into Okta. (see [below for nested schema](#nestedblock--password_hash))
 - `password_inline_hook` (String) Specifies that a Password Import Inline Hook should be triggered to handle verification of the user's password the first time the user logs in. This allows an existing password to be imported into Okta directly from some other store. When updating a user with a password hook the user must be in the `STAGED` status. The `password` field should not be specified when using Password Import Inline Hook.
+- `password_wo` (String, Sensitive, Write-only) User write-only password for Terraform 1.11+. Unlike `password`, this value is never persisted in the Terraform state file, providing improved security. This is the recommended way to set a user's password and pairs well with an ephemeral `random_password` resource so the generated password never touches state. Changes to this value are only applied when `password_wo_version` is changed. Only use this attribute with Terraform 1.11 or higher.
+- `password_wo_version` (Number) Version number for the write-only `password_wo`. Increment this value to trigger an update that re-applies the current `password_wo` to the user.
 - `postal_address` (String) User mailing address
 - `preferred_language` (String) User preferred language
 - `primary_phone` (String) User primary phone number

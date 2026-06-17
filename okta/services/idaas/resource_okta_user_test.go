@@ -243,6 +243,53 @@ func TestAccResourceOktaUser_updateCredentials(t *testing.T) {
 	})
 }
 
+// TestAccResourceOktaUser_writeOnlyPassword tests the write-only password_wo
+// attribute. The password is never persisted in state and updates are driven by
+// password_wo_version. This pairs with an ephemeral random_password resource so
+// a generated password never touches state.
+func TestAccResourceOktaUser_writeOnlyPassword(t *testing.T) {
+	mgr := newFixtureManager("resources", resources.OktaIDaaSUser, t.Name())
+	config := mgr.GetFixtures("password_wo.tf", t)
+	updatedConfig := mgr.GetFixtures("password_wo_updated.tf", t)
+	resourceName := fmt.Sprintf("%s.test", resources.OktaIDaaSUser)
+	email := fmt.Sprintf("testAcc-%d@example.com", mgr.Seed)
+
+	acctest.OktaResourceTest(t, resource.TestCase{
+		PreCheck:                 acctest.AccPreCheck(t),
+		ErrorCheck:               testAccErrorChecks(t),
+		ProtoV5ProviderFactories: acctest.ProtoV5ProviderFactoriesForTestAcc(t),
+		CheckDestroy:             checkUserDestroy,
+		Steps: []resource.TestStep{
+			{
+				Config: config,
+				Check: resource.ComposeTestCheckFunc(
+					resource.TestCheckResourceAttr(resourceName, "first_name", "TestAcc"),
+					resource.TestCheckResourceAttr(resourceName, "last_name", "Smith"),
+					resource.TestCheckResourceAttr(resourceName, "login", email),
+					resource.TestCheckResourceAttr(resourceName, "email", email),
+					resource.TestCheckResourceAttr(resourceName, "password_wo_version", "1"),
+					// The write-only password must never be persisted in state.
+					resource.TestCheckNoResourceAttr(resourceName, "password_wo"),
+					// The regular password attribute must remain empty.
+					resource.TestCheckNoResourceAttr(resourceName, "password"),
+				),
+			},
+			{
+				Config: updatedConfig,
+				Check: resource.ComposeTestCheckFunc(
+					resource.TestCheckResourceAttr(resourceName, "first_name", "TestAcc"),
+					resource.TestCheckResourceAttr(resourceName, "last_name", "Smith"),
+					resource.TestCheckResourceAttr(resourceName, "login", email),
+					resource.TestCheckResourceAttr(resourceName, "email", email),
+					resource.TestCheckResourceAttr(resourceName, "password_wo_version", "2"),
+					resource.TestCheckNoResourceAttr(resourceName, "password_wo"),
+					resource.TestCheckNoResourceAttr(resourceName, "password"),
+				),
+			},
+		},
+	})
+}
+
 func TestAccResourceOktaUser_statusDeprovisioned(t *testing.T) {
 	mgr := newFixtureManager("resources", resources.OktaIDaaSUser, t.Name())
 	statusChanged := mgr.GetFixtures("deprovisioned.tf", t)

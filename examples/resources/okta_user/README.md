@@ -4,3 +4,4 @@ Represents an Okta User. [See Okta documentation for more details](https://devel
 
 - Example of a simple user, and a user data source [can be found here](./datasource.tf)
 - Example of a user with multiple custom attributes, [can be found here](./custom_attributes.tf)
+- Example of a user with a write-only password sourced from an ephemeral `random_password` so the password never touches state, [can be found here](./password_wo_ephemeral.tf)
